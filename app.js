@@ -126,7 +126,13 @@ async function flushQueue() {
       let result;
       const payload = {...(item.data || {})};
       delete payload._offline;
-      if (item.op === "insert") result = await sb.from(item.table).insert(payload);
+      if (item.op === "insert") {
+        result = await sb.from(item.table).insert(payload);
+        if (result?.error?.code === "23505" && payload.client_request_id) {
+          const existing = await sb.from(item.table).select().eq("client_request_id", payload.client_request_id).maybeSingle();
+          if (!existing.error && existing.data) result = { data: existing.data };
+        }
+      }
       else if (item.op === "update") { delete payload.id; result = await sb.from(item.table).update(payload).eq("id",item.record_id); }
       else if (item.op === "delete") result = await sb.from(item.table).delete().eq("id",item.record_id);
       if (result?.error) throw result.error;
@@ -142,7 +148,13 @@ async function flushQueue() {
 async function mutate(table, data, op="insert") {
   if (state.online) {
     let r;
-    if(op==="insert") r=await sb.from(table).insert(data).select().single();
+    if(op==="insert") {
+      r=await sb.from(table).insert(data).select().single();
+      if (r?.error?.code === "23505" && data.client_request_id) {
+        const existing = await sb.from(table).select().eq("client_request_id", data.client_request_id).maybeSingle();
+        if (!existing.error && existing.data) r={data:existing.data};
+      }
+    }
     if(op==="update") r=await sb.from(table).update(data).eq("id",data.id).select().single();
     if(op==="delete") r=await sb.from(table).delete().eq("id",data.id);
     if(r?.error) throw r.error;
@@ -322,14 +334,35 @@ function renderStudents() {
 }
 ["student-search","grade-filter","shift-filter"].forEach(id=>$(("#"+id)).addEventListener("input",renderStudents));
 
+function behaviorRecordMonth(record, type) {
+  const raw = type === "infraction" ? record.occurred_at : type === "suspension" ? record.start_at : type === "referral" ? record.referred_at : record.recorded_at;
+  if (!raw) return null;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return null;
+  return { key: `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`, label: d.toLocaleString(undefined,{month:"long",year:"numeric"}), time:d.getTime() };
+}
+
+function buildMonthlyReportRows() {
+  const byKey = new Map();
+  const ensure = (month, student) => {
+    if (!month) return null;
+    const key = `${month.key}|${student.id}`;
+    if (!byKey.has(key)) byKey.set(key,{monthKey:month.key,monthLabel:month.label,monthTime:month.time,student,inf:0,susp:0,ref:0,positive:0});
+    return byKey.get(key);
+  };
+  state.infractions.forEach(r=>{const s=state.students.find(x=>x.id===r.student_id),m=behaviorRecordMonth(r,"infraction"); if(s&&m)ensure(m,s).inf++;});
+  state.suspensions.forEach(r=>{const s=state.students.find(x=>x.id===r.student_id),m=behaviorRecordMonth(r,"suspension"); if(s&&m)ensure(m,s).susp++;});
+  state.referrals.forEach(r=>{const s=state.students.find(x=>x.id===r.student_id),m=behaviorRecordMonth(r,"referral"); if(s&&m)ensure(m,s).ref++;});
+  state.positiveBehaviors.forEach(r=>{const s=state.students.find(x=>x.id===r.student_id),m=behaviorRecordMonth(r,"positive"); if(s&&m)ensure(m,s).positive++;});
+  return [...byKey.values()].filter(x=>x.inf||x.susp||x.ref||x.positive).sort((a,b)=>a.monthTime-b.monthTime || (a.student.name||"").localeCompare(b.student.name||""));
+}
+
 function renderReports() {
-  const byStudent=state.students.map(s=>({
-    student:s, inf:state.infractions.filter(x=>x.student_id===s.id).length,
-    susp:state.suspensions.filter(x=>x.student_id===s.id).length,
-    ref:state.referrals.filter(x=>x.student_id===s.id).length,
-    positive:state.positiveBehaviors.filter(x=>x.student_id===s.id).length
-  })).filter(x=>x.inf||x.susp||x.ref||x.positive).sort((a,b)=>(b.inf+b.susp+b.ref)-(a.inf+a.susp+a.ref));
-  $("#report-table").innerHTML=byStudent.length?`<table class="data-table"><thead><tr><th>Student</th><th>Infractions</th><th>Suspensions</th><th>Referrals</th><th>Positive</th><th>Total records</th></tr></thead><tbody>${byStudent.map(x=>`<tr><td>${escapeHtml(x.student.name)}</td><td>${x.inf}</td><td>${x.susp}</td><td>${x.ref}</td><td>${x.positive}</td><td><span class="tag">${x.inf+x.susp+x.ref+x.positive}</span></td></tr>`).join("")}</tbody></table>`:`<div class="empty">No reportable behavior records yet.</div>`;
+  const rows=buildMonthlyReportRows();
+  if(!rows.length){ $("#report-table").innerHTML=`<div class="empty">No reportable behavior records yet.</div>`; return; }
+  const groups=[];
+  rows.forEach(r=>{let g=groups.find(x=>x.key===r.monthKey);if(!g){g={key:r.monthKey,label:r.monthLabel,rows:[]};groups.push(g);}g.rows.push(r);});
+  $("#report-table").innerHTML=groups.map(g=>`<div class="report-month"><h4>${escapeHtml(g.label)}</h4><table class="data-table"><thead><tr><th>Student</th><th>Grade</th><th>Class</th><th>Shift</th><th>Infractions</th><th>Suspensions</th><th>Referrals</th><th>Positive</th><th>Total</th></tr></thead><tbody>${g.rows.map(x=>`<tr><td>${escapeHtml(x.student.name)}</td><td>${escapeHtml(x.student.grade||"—")}</td><td>${escapeHtml(x.student.class||"—")}</td><td>${escapeHtml(x.student.shift||"—")}</td><td>${x.inf}</td><td>${x.susp}</td><td>${x.ref}</td><td>${x.positive}</td><td><span class="tag">${x.inf+x.susp+x.ref+x.positive}</span></td></tr>`).join("")}</tbody></table></div>`).join("");
 }
 
 function openRecordChooser() {
@@ -411,15 +444,33 @@ function recordForm(type, presetStudent="") {
   if(!state.students.length){toast("Add a student first.","error");return}
   modal(`<div class="modal-head"><div><h3>${configs.title}</h3><p>Record securely against the student profile.</p></div><button class="close" data-close>×</button></div><form id="record-form" class="form-grid">${configs.fields}<div class="modal-actions full"><button type="button" class="btn secondary" data-close>Cancel</button><button class="btn primary">Save Record</button></div></form>`);
   if(presetStudent) $("#record-form [name=student_id]").value=presetStudent;
+  let recordSubmitting=false;
   $("#record-form").addEventListener("submit",async e=>{
-    e.preventDefault();const f=new FormData(e.target);const d=Object.fromEntries(f.entries());
+    e.preventDefault();
+    if(recordSubmitting)return;
+    recordSubmitting=true;
+    const form=e.target;
+    const submitButton=form.querySelector('button[type="submit"]');
+    if(submitButton){submitButton.disabled=true;submitButton.textContent="Saving…";}
+    const f=new FormData(form);const d=Object.fromEntries(f.entries());
+    if(type==="infraction"||type==="suspension") d.client_request_id=crypto.randomUUID();
     ["parent_contacted","parent_notified"].forEach(k=>{if(k in d)d[k]=f.get(k)==="on"});
     if(type==="note"){d.recorded_at=new Date().toISOString()}
     if(type==="positive"){d.recorded_at=d.recorded_at?new Date(d.recorded_at).toISOString():new Date().toISOString()}
     if(type==="infraction"||type==="referral"){d.occurred_at&&(d.occurred_at=new Date(d.occurred_at).toISOString());d.referred_at&&(d.referred_at=new Date(d.referred_at).toISOString())}
     if(type==="suspension"){d.start_at=d.start_at?new Date(d.start_at).toISOString():null;d.end_at=d.end_at?new Date(d.end_at).toISOString():null;d.days=d.days?Number(d.days):null}
-    try{const saved=await mutate(configs.table,d);const key=type==="note"?"notes":(type==="positive"?"positiveBehaviors":type+"s");state[key].unshift(saved);await IDB.put(type==="positive"?"positive_behaviors":key,saved);closeModal();render();toast(state.online?"Record saved.":"Record saved offline and queued for sync.","success")}catch(err){toast(err.message,"error")}}
-  );
+    try{
+      const saved=await mutate(configs.table,d);
+      const key=type==="note"?"notes":(type==="positive"?"positiveBehaviors":type+"s");
+      const duplicateInState=state[key].some(x=>saved?.id && x.id===saved.id);
+      if(!duplicateInState){state[key].unshift(saved);await IDB.put(type==="positive"?"positive_behaviors":key,saved);}
+      closeModal();render();toast(state.online?"Record saved.":"Record saved offline and queued for sync.","success")
+    }catch(err){
+      toast(err.message,"error");
+      recordSubmitting=false;
+      if(submitButton){submitButton.disabled=false;submitButton.textContent="Save Record";}
+    }
+  });
 }
 
 function openStudent(id) {
@@ -500,10 +551,11 @@ $("#add-staff-btn")?.addEventListener("click",()=>{
 });
 
 $("#export-csv").addEventListener("click",()=>{
-  const rows=[["Student ID","Student","Grade","Class","Infractions","Suspensions","Referrals","Positive Behaviour"]];
-  state.students.forEach(s=>rows.push([s.student_id||"",s.name,s.grade||"",s.class||"",state.infractions.filter(x=>x.student_id===s.id).length,state.suspensions.filter(x=>x.student_id===s.id).length,state.referrals.filter(x=>x.student_id===s.id).length,state.positiveBehaviors.filter(x=>x.student_id===s.id).length]));
-  const csv=rows.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(",")).join("\\n");
-  const blob=new Blob([csv],{type:"text/csv"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download="st-james-behavior-report.csv";a.click();URL.revokeObjectURL(url);
+  const reportRows=buildMonthlyReportRows();
+  const rows=[["Month","Student ID","Student","Grade","Class","Shift","Infractions","Suspensions","Referrals","Positive Behaviour","Total Records"]];
+  reportRows.forEach(x=>rows.push([x.monthLabel,x.student.student_id||"",x.student.name,x.student.grade||"",x.student.class||"",x.student.shift||"",x.inf,x.susp,x.ref,x.positive,x.inf+x.susp+x.ref+x.positive]));
+  const csv=rows.map(r=>r.map(v=>`"${String(v??"").replaceAll('"','""')}"`).join(",")).join("\r\n");
+  const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8;"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`st-james-monthly-behavior-report-${new Date().toISOString().slice(0,10)}.csv`;a.click();URL.revokeObjectURL(url);
 });
 
 if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(console.error);
