@@ -3,7 +3,7 @@ const sb = createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_PUBLISHABLE
 
 const state = {
   user: null, role: null, profile: null, online: navigator.onLine,
-  students: [], infractions: [], suspensions: [], referrals: [], positiveBehaviors: [], notes: [], staff: [], audit: [], photoUrls: new Map(),
+  students: [], infractions: [], suspensions: [], referrals: [], parentRequests: [], positiveBehaviors: [], notes: [], staff: [], audit: [], photoUrls: new Map(),
   currentPage: "dashboard"
 };
 
@@ -23,10 +23,10 @@ const IDB = {
   async open() {
     if (this.db) return this.db;
     this.db = await new Promise((resolve, reject) => {
-      const req = indexedDB.open("stjames_behavior_tracker", 1);
+      const req = indexedDB.open("stjames_behavior_tracker", 2);
       req.onupgradeneeded = () => {
         const db = req.result;
-        ["students","infractions","suspensions","referrals","positive_behaviors","notes","queue"].forEach(s => {
+        ["students","infractions","suspensions","referrals","parent_requests","positive_behaviors","notes","queue"].forEach(s => {
           if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: "id" });
         });
       };
@@ -78,6 +78,7 @@ async function loadAll() {
     state.infractions = await IDB.all("infractions");
     state.suspensions = await IDB.all("suspensions");
     state.referrals = await IDB.all("referrals");
+    state.parentRequests = await IDB.all("parent_requests");
     state.positiveBehaviors = await IDB.all("positive_behaviors");
     state.notes = await IDB.all("notes");
     render();
@@ -85,7 +86,7 @@ async function loadAll() {
   }
   const tables = [
     ["students","students"],["infractions","infractions"],["suspensions","suspensions"],
-    ["referrals","referrals"],["behavior_notes","notes"]
+    ["referrals","referrals"],["parent_requests","parentRequests"],["behavior_notes","notes"]
   ];
   for (const [table, key] of tables) {
     const {data,error} = await sb.from(table).select("*").order("created_at",{ascending:false});
@@ -223,7 +224,7 @@ function showPage(page) {
   $$(".page").forEach(x=>x.classList.add("hidden"));
   $(`#page-${page}`).classList.remove("hidden");
   $$(".nav-item[data-page]").forEach(x=>x.classList.toggle("active",x.dataset.page===page));
-  const titles={dashboard:"Dashboard",students:"Students",positive:"Positive Behaviour",reports:"Reports",staff:"Staff Accounts",audit:"Audit Log"};
+  const titles={dashboard:"Dashboard",students:"Students",positive:"Positive Behaviour",parent_requests:"Parent Requests",reports:"Reports",staff:"Staff Accounts",audit:"Audit Log"};
   $("#page-title").textContent=titles[page];
   render();
 }
@@ -239,11 +240,13 @@ function render() {
   const activeSuspensions = state.suspensions.filter(x => x.start_at && (!x.end_at || new Date(x.end_at) >= now) && new Date(x.start_at) <= now).length;
   const monthlyReferrals = state.referrals.filter(x => x.referred_at && new Date(x.referred_at) >= monthStart).length;
   const positiveCount = state.positiveBehaviors.length;
+  const parentRequestCount = state.parentRequests.length;
   $('#stat-students').textContent = state.students.length;
   $('#stat-infractions').textContent = todaysInfractions;
   $('#stat-suspensions').textContent = activeSuspensions;
   $('#stat-referrals').textContent = monthlyReferrals;
   $('#stat-positive').textContent = positiveCount;
+  if($('#stat-parent-requests')) $('#stat-parent-requests').textContent = parentRequestCount;
   $('#hero-role').textContent = ROLE_LABELS[state.role] || 'Staff';
   const contacts=state.infractions.filter(x=>x.parent_contacted).length;
   $('#report-contacts').textContent=contacts;
@@ -263,6 +266,7 @@ function render() {
   renderStudents();
   renderReports();
   renderAudit();
+  renderParentRequests();
 }
 
 function renderBehaviorChart() {
@@ -383,6 +387,7 @@ function openAction(action) {
   if(action==="suspension") return recordForm("suspension");
   if(action==="referral") return recordForm("referral");
   if(action==="positive") return recordForm("positive");
+  if(action==="parent_request") return recordForm("parent_request");
   if(action==="note") return recordForm("note");
   if(action==="report") return showPage("reports");
 }
@@ -437,13 +442,15 @@ function recordForm(type, presetStudent="") {
   const configs={
     infraction:{title:"Log Infraction",table:"infractions",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Date & time<input name="occurred_at" type="datetime-local" value="${new Date().toISOString().slice(0,16)}"></label><label>Infraction type<input name="infraction_type" required placeholder="e.g. Truancy"></label><label>Location<input name="location"></label><label class="full">Description<textarea name="description" required></textarea></label><label>Action taken<input name="action_taken"></label><label>Follow-up date<input name="follow_up_date" type="date"></label><label class="full"><input name="parent_contacted" type="checkbox" style="width:auto"> Parent/guardian contacted</label>`},
     suspension:{title:"Record Suspension",table:"suspensions",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Days<input name="days" type="number" min="0" step="0.5"></label><label>Start<input name="start_at" type="datetime-local"></label><label>End<input name="end_at" type="datetime-local"></label><label class="full">Reason<textarea name="reason" required></textarea></label><label class="full">Return conditions<textarea name="return_conditions"></textarea></label><label class="full"><input name="parent_notified" type="checkbox" style="width:auto"> Parent/guardian notified</label>`},
+    parent_request:{title:"Parent Request",table:"parent_requests",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Date & time<input name="requested_at" type="datetime-local" value="${new Date().toISOString().slice(0,16)}"></label><label>Parent/Guardian name<input name="parent_name"></label><label>Parent telephone<input name="parent_phone"></label><label>Request type<select name="request_type" required><option value="">Select</option><option>Meeting</option><option>Phone Call</option><option>Early Release</option><option>Behavior Concern</option><option>Academic Concern</option><option>Other</option></select></label><label>Status<select name="status"><option>Open</option><option>In Progress</option><option>Completed</option></select></label><label class="full">Reason / Request<textarea name="reason" required></textarea></label><label>Requested action<input name="requested_action"></label><label>Follow-up date<input name="follow_up_date" type="date"></label><label class="full">Notes<textarea name="notes"></textarea></label>`},
     referral:{title:"Create Referral",table:"referrals",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Date<input name="referred_at" type="datetime-local" value="${new Date().toISOString().slice(0,16)}"></label><label>Referral type<input name="referral_type" required placeholder="e.g. Guidance"></label><label>Destination<input name="destination" placeholder="e.g. Guidance Counsellor"></label><label class="full">Reason<textarea name="reason"></textarea></label><label class="full">Outcome<textarea name="outcome"></textarea></label><label>Follow-up date<input name="follow_up_date" type="date"></label>`},
     positive:{title:"Add Positive Behaviour",table:"positive_behaviors",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Date & time<input name="recorded_at" type="datetime-local" value="${new Date().toISOString().slice(0,16)}"></label><label>Behaviour type<select name="behavior_type" required><option>Respectful Conduct</option><option>Academic Achievement</option><option>Leadership</option><option>Helping Others</option><option>Attendance / Punctuality</option><option>School Spirit</option><option>Improved Behaviour</option><option>Other</option></select></label><label>Recognition<input name="recognition" placeholder="e.g. Commendation, award, verbal praise"></label><label class="full">Description<textarea name="description" required placeholder="Describe the positive behaviour..."></textarea></label>`},
     note:{title:"Add Behavior Note",table:"behavior_notes",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Category<select name="category"><option>additional</option><option>positive</option><option>intervention</option><option>parent_contact</option></select></label><label class="full">Note<textarea name="note" required></textarea></label>`}
   }[type];
   if(!state.students.length){toast("Add a student first.","error");return}
-  modal(`<div class="modal-head"><div><h3>${configs.title}</h3><p>Record securely against the student profile.</p></div><button class="close" data-close>×</button></div><form id="record-form" class="form-grid">${configs.fields}<div class="modal-actions full"><button type="button" class="btn secondary" data-close>Cancel</button><button class="btn primary">Save Record</button></div></form>`);
+  modal(`<div class="modal-head"><div><h3>${configs.title}</h3><p>Record securely against the student profile.</p></div><button class="close" data-close>×</button></div><form id="record-form" class="form-grid">${configs.fields}<div class="modal-actions full"><button type="button" class="btn secondary" data-close>Cancel</button>${(type==="suspension"||type==="parent_request")?`<button type="button" class="btn secondary" id="print-record-draft">🖨 Print</button>`:""}<button class="btn primary" type="submit">Save Record</button></div></form>`);
   if(presetStudent) $("#record-form [name=student_id]").value=presetStudent;
+  $("#print-record-draft")?.addEventListener("click",()=>printDraftRecord(type));
   let recordSubmitting=false;
   $("#record-form").addEventListener("submit",async e=>{
     e.preventDefault();
@@ -453,12 +460,13 @@ function recordForm(type, presetStudent="") {
     const submitButton=form.querySelector('button[type="submit"]');
     if(submitButton){submitButton.disabled=true;submitButton.textContent="Saving…";}
     const f=new FormData(form);const d=Object.fromEntries(f.entries());
-    if(type==="infraction"||type==="suspension") d.client_request_id=crypto.randomUUID();
+    if(type==="infraction"||type==="suspension"||type==="parent_request") d.client_request_id=crypto.randomUUID();
     ["parent_contacted","parent_notified"].forEach(k=>{if(k in d)d[k]=f.get(k)==="on"});
     if(type==="note"){d.recorded_at=new Date().toISOString()}
     if(type==="positive"){d.recorded_at=d.recorded_at?new Date(d.recorded_at).toISOString():new Date().toISOString()}
     if(type==="infraction"||type==="referral"){d.occurred_at&&(d.occurred_at=new Date(d.occurred_at).toISOString());d.referred_at&&(d.referred_at=new Date(d.referred_at).toISOString())}
     if(type==="suspension"){d.start_at=d.start_at?new Date(d.start_at).toISOString():null;d.end_at=d.end_at?new Date(d.end_at).toISOString():null;d.days=d.days?Number(d.days):null}
+    if(type==="parent_request") d.requested_at=d.requested_at?new Date(d.requested_at).toISOString():new Date().toISOString()
     try{
       const saved=await mutate(configs.table,d);
       const key=type==="note"?"notes":(type==="positive"?"positiveBehaviors":type+"s");
@@ -479,7 +487,7 @@ function openStudent(id) {
   modal(`<div class="modal-head"><div><h3>Student Profile</h3><p>Behavior and support history</p></div><button class="close" data-close>×</button></div>
     <div class="profile-head"><div class="avatar-large">${state.photoUrls.get(s.id)?`<img src="${escapeHtml(state.photoUrls.get(s.id))}" alt="">`:escapeHtml((s.name||"S").charAt(0))}</div><div><h3 style="margin:0">${escapeHtml(s.name)}</h3><p class="muted">${escapeHtml(s.student_id||"No student ID")} · Grade ${escapeHtml(s.grade||"—")} · ${escapeHtml(s.class||"—")} · ${escapeHtml(s.shift||"—")}</p></div></div>
     <div class="form-grid" style="margin-top:15px"><div><b>Address</b><div class="muted">${escapeHtml(s.address||"—")}</div></div><div><b>Parent/Guardian</b><div class="muted">${escapeHtml(s.parent_name||"—")} · ${escapeHtml(s.parent_phone||"—")}</div></div><div class="full"><b>Additional information</b><div class="muted">${escapeHtml(s.additional_information||"—")}</div></div></div>
-    <div class="modal-actions"><button class="btn primary" id="edit-student-btn" type="button">✎ Edit Student</button><button class="btn secondary" data-add-record="note">＋ Note</button><button class="btn secondary" data-add-record="infraction">＋ Infraction</button><button class="btn secondary" data-add-record="suspension">＋ Suspension</button><button class="btn secondary" data-add-record="positive">＋ Positive</button><button class="btn primary" data-add-record="referral">＋ Referral</button>${state.role==="dean"?`<button class="btn danger" id="delete-student-btn" type="button">Delete Student Profile</button>`:""}</div>
+    <div class="modal-actions"><button class="btn primary" id="edit-student-btn" type="button">✎ Edit Student</button><button class="btn secondary" id="print-student-btn" type="button">🖨 Print Profile</button><button class="btn secondary" data-add-record="note">＋ Note</button><button class="btn secondary" data-add-record="infraction">＋ Infraction</button><button class="btn secondary" data-add-record="suspension">＋ Suspension</button><button class="btn secondary" data-add-record="positive">＋ Positive</button><button class="btn primary" data-add-record="referral">＋ Referral</button>${state.role==="dean"?`<button class="btn danger" id="delete-student-btn" type="button">Delete Student Profile</button>`:""}</div>
     <div class="record-grid">
       <div class="record-section"><h4>Infractions (${inf.length})</h4>${inf.length?inf.map(x=>`<div class="record-item"><b>${escapeHtml(x.infraction_type)}</b><br>${escapeHtml(x.description||"")}<br><span class="muted">${fmtDate(x.occurred_at)}</span></div>`).join(""):`<div class="empty">None recorded.</div>`}</div>
       <div class="record-section"><h4>Suspensions (${susp.length})</h4>${susp.length?susp.map(x=>`<div class="record-item"><b>${escapeHtml(x.reason)}</b><br>${x.days||"—"} day(s)<br><span class="muted">${fmtDate(x.start_at)} → ${fmtDate(x.end_at)}</span></div>`).join(""):`<div class="empty">None recorded.</div>`}</div>
@@ -488,6 +496,7 @@ function openStudent(id) {
       <div class="record-section"><h4>Profile notes (${notes.length})</h4>${notes.length?notes.map(x=>`<div class="record-item"><b>${escapeHtml(x.category||"additional")}</b><br>${escapeHtml(x.note)}<br><span class="muted">${fmtDate(x.recorded_at)}</span></div>`).join(""):`<div class="empty">None recorded.</div>`}</div>
     </div>`);
   $("#edit-student-btn")?.addEventListener("click",()=>{closeModal();studentForm(id)});
+  $("#print-student-btn")?.addEventListener("click",()=>printStudentProfile(id));
   $$("#modal-root [data-add-record]").forEach(b=>b.addEventListener("click",()=>{const type=b.dataset.addRecord;closeModal();recordForm(type,id)}));
   $("#delete-student-btn")?.addEventListener("click", async()=>{
     if(state.role!=="dean") return;
@@ -500,13 +509,41 @@ function openStudent(id) {
       }
       await mutate("students",{id:s.id},"delete");
       state.students=state.students.filter(x=>x.id!==s.id);
-      ["infractions","suspensions","referrals","positiveBehaviors","notes"].forEach(key=>{state[key]=state[key].filter(x=>x.student_id!==s.id)});
+      ["infractions","suspensions","referrals","parentRequests","positiveBehaviors","notes"].forEach(key=>{state[key]=state[key].filter(x=>x.student_id!==s.id)});
       await IDB.del("students",s.id);
       closeModal(); render();
       toast(state.online?"Student profile deleted.":"Student profile deletion queued for sync.","success");
     }catch(err){toast(err.message||"Could not delete student profile.","error")}
   });
 }
+
+function printDraftRecord(type){
+  const form=$("#record-form"); if(!form)return;
+  const d=Object.fromEntries(new FormData(form).entries());
+  const s=state.students.find(x=>x.id===d.student_id);
+  const title=type==="suspension"?"Suspension Record":"Parent Request";
+  const rows=type==="suspension"?`
+    <div><div class="label">Student</div><div class="value">${escapeHtml(s?.name||"—")}</div></div><div><div class="label">Student ID</div><div class="value">${escapeHtml(s?.student_id||"—")}</div></div>
+    <div><div class="label">Grade / Class / Shift</div><div class="value">${escapeHtml([s?.grade,s?.class,s?.shift].filter(Boolean).join(" / ")||"—")}</div></div><div><div class="label">Days</div><div class="value">${escapeHtml(d.days||"—")}</div></div>
+    <div><div class="label">Start</div><div class="value">${escapeHtml(d.start_at?new Date(d.start_at).toLocaleString():"—")}</div></div><div><div class="label">End</div><div class="value">${escapeHtml(d.end_at?new Date(d.end_at).toLocaleString():"—")}</div></div>
+    <div class="full"><div class="label">Reason</div><div class="value">${escapeHtml(d.reason||"—")}</div></div><div class="full"><div class="label">Return Conditions</div><div class="value">${escapeHtml(d.return_conditions||"—")}</div></div><div><div class="label">Parent/Guardian Notified</div><div class="value">${d.parent_notified?"Yes":"No"}</div></div>`:
+    `<div><div class="label">Student</div><div class="value">${escapeHtml(s?.name||"—")}</div></div><div><div class="label">Student ID</div><div class="value">${escapeHtml(s?.student_id||"—")}</div></div><div><div class="label">Grade / Class / Shift</div><div class="value">${escapeHtml([s?.grade,s?.class,s?.shift].filter(Boolean).join(" / ")||"—")}</div></div><div><div class="label">Date & Time</div><div class="value">${escapeHtml(d.requested_at?new Date(d.requested_at).toLocaleString():"—")}</div></div><div><div class="label">Parent/Guardian</div><div class="value">${escapeHtml(d.parent_name||s?.parent_name||"—")}</div></div><div><div class="label">Telephone</div><div class="value">${escapeHtml(d.parent_phone||s?.parent_phone||"—")}</div></div><div><div class="label">Request Type</div><div class="value">${escapeHtml(d.request_type||"—")}</div></div><div><div class="label">Status</div><div class="value">${escapeHtml(d.status||"Open")}</div></div><div class="full"><div class="label">Reason / Request</div><div class="value">${escapeHtml(d.reason||"—")}</div></div><div><div class="label">Requested Action</div><div class="value">${escapeHtml(d.requested_action||"—")}</div></div><div><div class="label">Follow-up Date</div><div class="value">${escapeHtml(d.follow_up_date||"—")}</div></div><div class="full"><div class="label">Notes</div><div class="value">${escapeHtml(d.notes||"—")}</div></div>`;
+  printHtml(title,`<div class="section grid">${rows}</div>`);
+}
+
+function renderParentRequests(){
+  const el=$("#parent-request-table"); if(!el) return;
+  const rows=state.parentRequests.slice().sort((a,b)=>new Date(b.requested_at||b.created_at)-new Date(a.requested_at||a.created_at));
+  el.innerHTML=rows.length?`<table class="data-table"><thead><tr><th>Date</th><th>Student</th><th>Parent/Guardian</th><th>Request</th><th>Status</th><th>Follow-up</th><th>Actions</th></tr></thead><tbody>${rows.map(r=>{const s=state.students.find(x=>x.id===r.student_id);return `<tr><td>${fmtDate(r.requested_at)}</td><td>${escapeHtml(s?.name||"Unknown")}</td><td>${escapeHtml(r.parent_name||s?.parent_name||"—")}<br><span class="muted">${escapeHtml(r.parent_phone||s?.parent_phone||"")}</span></td><td><b>${escapeHtml(r.request_type)}</b><br>${escapeHtml(r.reason)}</td><td><span class="tag">${escapeHtml(r.status||"Open")}</span></td><td>${escapeHtml(r.follow_up_date||"—")}</td><td><button class="btn secondary" data-print-parent="${r.id}">🖨 Print</button></td></tr>`}).join("")}</tbody></table>`:`<div class="empty">No parent requests recorded.</div>`;
+  $$('[data-print-parent]').forEach(b=>b.addEventListener('click',()=>printParentRequest(b.dataset.printParent)));
+}
+
+function printHtml(title, body){
+  const w=window.open("","_blank","width=900,height=700"); if(!w){toast("Please allow pop-ups to print.","error");return;}
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>body{font-family:Arial,sans-serif;color:#17365d;margin:35px}header{display:flex;align-items:center;gap:15px;border-bottom:3px solid #0a5ca8;padding-bottom:14px;margin-bottom:20px}header img{width:75px;height:75px;object-fit:contain}h1{font-size:22px;margin:0}h2{font-size:18px;margin:5px 0}p{line-height:1.5}.section{border:1px solid #d9e1ea;border-radius:8px;padding:14px;margin:12px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.label{font-size:11px;text-transform:uppercase;color:#68788a;font-weight:bold}.value{font-size:13px;margin-top:3px;white-space:pre-wrap}.full{grid-column:1/-1}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d9e1ea;padding:8px;text-align:left;font-size:12px}th{background:#eef4f9}@media print{body{margin:15mm}.no-print{display:none!important}}</style></head><body><header><img src="${location.origin}${location.pathname.replace(/[^/]*$/,"")}assets/school-logo.jpg"><div><h1>St. James High School</h1><h2>${escapeHtml(title)}</h2></div></header>${body}<p class="no-print" style="margin-top:25px;color:#777">Printed from Student Behavior Tracker</p><script>window.onload=()=>{setTimeout(()=>window.print(),250)}</script></body></html>`);w.document.close();
+}
+function printParentRequest(id){const r=state.parentRequests.find(x=>x.id===id);if(!r)return;const s=state.students.find(x=>x.id===r.student_id);const body=`<div class="section grid"><div><div class="label">Student</div><div class="value">${escapeHtml(s?.name||"—")}</div></div><div><div class="label">Student ID</div><div class="value">${escapeHtml(s?.student_id||"—")}</div></div><div><div class="label">Grade / Class / Shift</div><div class="value">${escapeHtml([s?.grade,s?.class,s?.shift].filter(Boolean).join(" / ")||"—")}</div></div><div><div class="label">Date & Time</div><div class="value">${fmtDate(r.requested_at)}</div></div><div><div class="label">Parent/Guardian</div><div class="value">${escapeHtml(r.parent_name||s?.parent_name||"—")}</div></div><div><div class="label">Telephone</div><div class="value">${escapeHtml(r.parent_phone||s?.parent_phone||"—")}</div></div><div><div class="label">Request Type</div><div class="value">${escapeHtml(r.request_type)}</div></div><div><div class="label">Status</div><div class="value">${escapeHtml(r.status||"Open")}</div></div><div class="full"><div class="label">Reason / Request</div><div class="value">${escapeHtml(r.reason)}</div></div><div><div class="label">Requested Action</div><div class="value">${escapeHtml(r.requested_action||"—")}</div></div><div><div class="label">Follow-up Date</div><div class="value">${escapeHtml(r.follow_up_date||"—")}</div></div><div class="full"><div class="label">Notes</div><div class="value">${escapeHtml(r.notes||"—")}</div></div></div>`;printHtml("Parent Request",body)}
+function printStudentProfile(id){const s=state.students.find(x=>x.id===id);if(!s)return;const inf=state.infractions.filter(x=>x.student_id===id), susp=state.suspensions.filter(x=>x.student_id===id), ref=state.referrals.filter(x=>x.student_id===id), pr=state.parentRequests.filter(x=>x.student_id===id), pos=state.positiveBehaviors.filter(x=>x.student_id===id);const list=(items,fn)=>items.length?`<table><tbody>${items.map(fn).join("")}</tbody></table>`:`<p>None recorded.</p>`;const body=`<div class="section grid"><div><div class="label">Student ID</div><div class="value">${escapeHtml(s.student_id||"—")}</div></div><div><div class="label">Name</div><div class="value">${escapeHtml(s.name)}</div></div><div><div class="label">Grade / Class / Shift</div><div class="value">${escapeHtml([s.grade,s.class,s.shift].filter(Boolean).join(" / ")||"—")}</div></div><div><div class="label">Parent/Guardian</div><div class="value">${escapeHtml(s.parent_name||"—")} · ${escapeHtml(s.parent_phone||"")}</div></div><div class="full"><div class="label">Address</div><div class="value">${escapeHtml(s.address||"—")}</div></div><div class="full"><div class="label">Additional Information</div><div class="value">${escapeHtml(s.additional_information||"—")}</div></div></div><div class="section"><h3>Infraction History (${inf.length})</h3>${list(inf,x=>`<tr><td>${fmtDate(x.occurred_at)}</td><td><b>${escapeHtml(x.infraction_type)}</b><br>${escapeHtml(x.description||"")}</td><td>${escapeHtml(x.action_taken||"—")}</td></tr>`)}</div><div class="section"><h3>Suspension History (${susp.length})</h3>${list(susp,x=>`<tr><td>${fmtDate(x.start_at)}</td><td>${fmtDate(x.end_at)}</td><td><b>${escapeHtml(x.reason)}</b><br>${escapeHtml(x.days||"—")} day(s)</td></tr>`)}</div><div class="section"><h3>Parent Requests (${pr.length})</h3>${list(pr,x=>`<tr><td>${fmtDate(x.requested_at)}</td><td><b>${escapeHtml(x.request_type)}</b><br>${escapeHtml(x.reason)}</td><td>${escapeHtml(x.status||"Open")}</td></tr>`)}</div><div class="section"><h3>Referrals (${ref.length})</h3>${list(ref,x=>`<tr><td>${fmtDate(x.referred_at)}</td><td><b>${escapeHtml(x.referral_type)}</b><br>${escapeHtml(x.destination||"")}</td><td>${escapeHtml(x.outcome||"—")}</td></tr>`)}</div><div class="section"><h3>Positive Behaviour (${pos.length})</h3>${list(pos,x=>`<tr><td>${fmtDate(x.recorded_at)}</td><td><b>${escapeHtml(x.behavior_type)}</b><br>${escapeHtml(x.description||"")}</td><td>${escapeHtml(x.recognition||"—")}</td></tr>`)}</div>`;printHtml("Student Profile",body)}
 
 function renderAudit() {
   const el=$("#audit-table");

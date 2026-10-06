@@ -43,6 +43,7 @@
         <button class="nav-item active" data-page="dashboard">▦ <span>Dashboard</span></button>
         <button class="nav-item" data-page="students">◉ <span>Students</span></button>
         <button class="nav-item" data-page="positive">★ <span>Positive Behaviour</span></button>
+        <button class="nav-item" data-page="parent_requests">☎ <span>Parent Requests</span></button>
         <button class="nav-item" data-page="reports">▤ <span>Reports</span></button>
         <button class="nav-item dean-only" data-page="staff">⚙ <span>Staff Accounts</span></button>
         <button class="nav-item dean-only" data-page="audit">⌁ <span>Audit Log</span></button>
@@ -88,6 +89,7 @@
             <button class="quick-card" data-action="suspension"><span class="quick-icon">◉</span><strong>Record Suspension</strong><small>Add suspension history</small></button>
             <button class="quick-card" data-action="referral"><span class="quick-icon">➜</span><strong>Record Referral</strong><small>Connect student support</small></button>
             <button class="quick-card" data-action="positive"><span class="quick-icon">★</span><strong>Add Positive Behaviour</strong><small>Recognize positive conduct</small></button>
+            <button class="quick-card" data-action="parent_request"><span class="quick-icon">☎</span><strong>Parent Request</strong><small>Record and print a parent request</small></button>
             <button class="quick-card" data-action="report"><span class="quick-icon">▤</span><strong>View Reports</strong><small>Review behavior data</small></button>
           </div></section>
           <section class="panel notifications-panel"><div class="panel-head"><div><h3>Notifications</h3><p>Items requiring attention</p></div></div><div id="notifications-list" class="notification-list"></div></section>
@@ -106,6 +108,13 @@
           </div>
           <div class="filters"><input id="student-search" placeholder="Search name, ID, parent or class…"><select id="grade-filter"><option value="">All grades</option></select><select id="shift-filter"><option value="">All shifts</option></select></div>
           <div id="student-table" class="table-wrap"></div>
+        </section>
+      </div>
+
+      <div id="page-parent_requests" class="page hidden">
+        <section class="panel">
+          <div class="panel-head"><div><h3>Parent Requests</h3><p>Record parent requests, track follow-up and print completed or draft requests.</p></div><button class="btn primary" data-action="parent_request">＋ Add Parent Request</button></div>
+          <div id="parent-request-table" class="table-wrap"></div>
         </section>
       </div>
 
