@@ -31,3 +31,11 @@ Upload the contents of the `phase10` directory to the connected Vercel/Git deplo
 - The Active Suspensions dashboard card and report card are clickable and open a table of all currently active suspensions, including student, start/end, days, reason, and referral destination. Click the student's name to open their profile.
 - Added a Dean-only “Refresh list” control in Staff Accounts to fetch the latest staff profiles. The Vice Principal profile `Joseph Haughton` with role `vice_principal` and active status was confirmed in the database on October 11, 2026. If the deployed site still doesn't show it, deploy this frontend and hard-refresh/clear the old PWA cache.
 - Updated the service-worker cache name so deployed browsers can fetch the updated interface.
+
+
+## Phase 13 — Student editing and login data refresh
+- Added a dedicated **Edit** button to each row in the Students directory, so editing does not depend on opening the profile modal first. The Edit Student button remains available inside each profile.
+- Fixed a possible duplicate startup race between Supabase session retrieval and the authentication state listener.
+- Refreshes live data when opening Dashboard or Students, and re-renders after the initial data load.
+- Added `positive_behaviors` to the online data-loading list so dashboard/report views can receive those records as well.
+- Bumped the service-worker cache version to `stjames-behavior-v6-student-edit-login-load`; deploy this frontend package and hard-refresh the browser/PWA to use it.

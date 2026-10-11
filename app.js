@@ -4,7 +4,7 @@ const sb = createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_PUBLISHABLE
 const state = {
   user: null, role: null, profile: null, online: navigator.onLine,
   students: [], infractions: [], suspensions: [], referrals: [], parentRequests: [], positiveBehaviors: [], notes: [], staff: [], audit: [], staffNotifications: [], photoUrls: new Map(),
-  currentPage: "dashboard"
+  currentPage: "dashboard", startingUserId: null
 };
 
 const $ = (s) => document.querySelector(s);
@@ -86,7 +86,8 @@ async function loadAll() {
   }
   const tables = [
     ["students","students"],["infractions","infractions"],["suspensions","suspensions"],
-    ["referrals","referrals"],["parent_requests","parentRequests"],["behavior_notes","notes"]
+    ["referrals","referrals"],["parent_requests","parentRequests"],["behavior_notes","notes"],
+    ["positive_behaviors","positiveBehaviors"]
   ];
   for (const [table, key] of tables) {
     const {data,error} = await sb.from(table).select("*").order("created_at",{ascending:false});
@@ -181,15 +182,23 @@ async function mutate(table, data, op="insert") {
 
 async function boot() {
   setOnline(navigator.onLine);
-  const {data:{session}} = await sb.auth.getSession();
-  if (session) await startApp(session.user);
-  else showLogin();
+  // Subscribe before reading the current session so the initial auth event cannot
+  // race a second app startup and leave the first render stale.
   sb.auth.onAuthStateChange(async (_event, session) => {
-    if(session?.user) await startApp(session.user); else showLogin();
+    if (session?.user) await startApp(session.user);
+    else { state.user = null; state.startingUserId = null; showLogin(); }
   });
+  const {data:{session}} = await sb.auth.getSession();
+  if (session?.user) await startApp(session.user);
+  else showLogin();
 }
 
 async function startApp(user) {
+  if (state.startingUserId === user.id) return;
+  if (state.user?.id === user.id && !$("#app-view").classList.contains("hidden") && state.students.length) {
+    await loadAll(); showPage(state.currentPage || "dashboard"); return;
+  }
+  state.startingUserId = user.id;
   state.user = user;
   const {data: roleData} = await sb.rpc("current_user_role");
   state.role = roleData || null;
@@ -203,9 +212,15 @@ async function startApp(user) {
   $("#user-role").textContent = ROLE_LABELS[state.role] || "Staff";
   $("#user-avatar").textContent = (state.profile.full_name || "S").trim().charAt(0).toUpperCase();
   $$(".dean-only").forEach(x=>x.classList.toggle("hidden",state.role!=="dean"));
-  await loadAll();
-  if(state.role==="dean") await loadStaff();
-  showPage("dashboard");
+  try {
+    await loadAll();
+    if(state.role==="dean") await loadStaff();
+    // Render the populated state before revealing the landing page.
+    render();
+    showPage("dashboard");
+  } finally {
+    state.startingUserId = null;
+  }
 }
 
 function showLogin() {
@@ -230,7 +245,7 @@ function showPage(page) {
   $("#page-title").textContent=titles[page];
   render();
 }
-$("#main-nav").addEventListener("click",e=>{const b=e.target.closest("[data-page]");if(b)showPage(b.dataset.page)});
+$("#main-nav").addEventListener("click",async e=>{const b=e.target.closest("[data-page]");if(!b)return;const page=b.dataset.page;showPage(page);if(state.online && ["dashboard","students"].includes(page)){try{await loadAll();render();}catch(err){console.error("Page refresh failed",err);toast("Some data could not be refreshed. Check your connection and try again.","error")}}});
 $$("[data-page-link]").forEach(b=>b.addEventListener("click",()=>showPage(b.dataset.pageLink)));
 $("#quick-add-btn").addEventListener("click",()=>openRecordChooser());
 $$("[data-action]").forEach(b=>b.addEventListener("click",()=>openAction(b.dataset.action)));
@@ -358,11 +373,12 @@ function renderStudents() {
     const hay=[s.name,s.student_id,s.parent_name,s.class,s.grade].join(" ").toLowerCase();
     return (!q||hay.includes(q))&&(!grade||s.grade===grade)&&(!shift||s.shift===shift);
   });
-  $("#student-table").innerHTML=rows.length?`<table class="data-table"><thead><tr><th>Student</th><th>Grade/Class</th><th>Shift</th><th>Parent</th><th>Phone</th><th>Records</th></tr></thead><tbody>${rows.map(s=>{
+  $("#student-table").innerHTML=rows.length?`<table class="data-table"><thead><tr><th>Student</th><th>Grade/Class</th><th>Shift</th><th>Parent</th><th>Phone</th><th>Records</th><th>Actions</th></tr></thead><tbody>${rows.map(s=>{
     const count=state.infractions.filter(x=>x.student_id===s.id).length+state.suspensions.filter(x=>x.student_id===s.id).length+state.referrals.filter(x=>x.student_id===s.id).length;
-    return `<tr><td><div style="display:flex;align-items:center"><span class="avatar-small">${state.photoUrls.get(s.id)?`<img src="${escapeHtml(state.photoUrls.get(s.id))}" alt="">`:escapeHtml((s.name||"S").charAt(0))}</span><div><button class="student-link" data-student="${s.id}">${escapeHtml(s.name)}</button><div class="muted">${escapeHtml(s.student_id||"No ID")}</div></div></div></td><td>${escapeHtml(s.grade||"—")} / ${escapeHtml(s.class||"—")}</td><td>${escapeHtml(s.shift||"—")}</td><td>${escapeHtml(s.parent_name||"—")}</td><td>${escapeHtml(s.parent_phone||"—")}</td><td><span class="tag">${count}</span></td></tr>`;
+    return `<tr><td><div style="display:flex;align-items:center"><span class="avatar-small">${state.photoUrls.get(s.id)?`<img src="${escapeHtml(state.photoUrls.get(s.id))}" alt="">`:escapeHtml((s.name||"S").charAt(0))}</span><div><button class="student-link" data-student="${s.id}">${escapeHtml(s.name)}</button><div class="muted">${escapeHtml(s.student_id||"No ID")}</div></div></div></td><td>${escapeHtml(s.grade||"—")} / ${escapeHtml(s.class||"—")}</td><td>${escapeHtml(s.shift||"—")}</td><td>${escapeHtml(s.parent_name||"—")}</td><td>${escapeHtml(s.parent_phone||"—")}</td><td><span class="tag">${count}</span></td><td><button class="btn secondary btn-small" type="button" data-edit-student="${s.id}">✎ Edit</button></td></tr>`;
   }).join("")}</tbody></table>`:`<div class="empty">No students match the current filters.</div>`;
   $$("#student-table [data-student]").forEach(b=>b.addEventListener("click",()=>openStudent(b.dataset.student)));
+  $$("#student-table [data-edit-student]").forEach(b=>b.addEventListener("click",e=>{e.stopPropagation();studentForm(b.dataset.editStudent)}));
 }
 ["student-search","grade-filter","shift-filter"].forEach(id=>$(("#"+id)).addEventListener("input",renderStudents));
 
