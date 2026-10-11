@@ -1,4 +1,4 @@
-# St. James High School Student Behavior Tracker — Phase 11 TextBee SMS
+# St. James High School Student Behavior Tracker — Phase 12 Suspension & Staff Improvements
 
 Static PWA frontend using Supabase Auth/Database. This package adds an opt-in SMS send checkbox when recording a suspension and an opt-in urgent-incident SMS checkbox when recording an infraction.
 
@@ -24,3 +24,10 @@ Then test with a staff account that has the Dean, Principal, or Vice Principal r
 
 ## Deploying the frontend
 Upload the contents of the `phase10` directory to the connected Vercel/Git deployment source and deploy. The Supabase Edge Function and database migration have already been deployed separately; the live website will not use these frontend changes until this package is deployed.
+
+
+## Phase 12 improvements
+- Added “Place referral was made to” on the suspension form and suspension print draft. This is saved to `suspensions.referral_made_to`.
+- The Active Suspensions dashboard card and report card are clickable and open a table of all currently active suspensions, including student, start/end, days, reason, and referral destination. Click the student's name to open their profile.
+- Added a Dean-only “Refresh list” control in Staff Accounts to fetch the latest staff profiles. The Vice Principal profile `Joseph Haughton` with role `vice_principal` and active status was confirmed in the database on October 11, 2026. If the deployed site still doesn't show it, deploy this frontend and hard-refresh/clear the old PWA cache.
+- Updated the service-worker cache name so deployed browsers can fetch the updated interface.
