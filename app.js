@@ -84,24 +84,45 @@ async function loadAll() {
     render();
     return;
   }
+  // Keep the Supabase table, in-memory state property, and IndexedDB store
+  // separate. State uses camelCase for two collections, but IndexedDB stores
+  // retain their snake_case names.
   const tables = [
-    ["students","students"],["infractions","infractions"],["suspensions","suspensions"],
-    ["referrals","referrals"],["parent_requests","parentRequests"],["behavior_notes","notes"],
-    ["positive_behaviors","positiveBehaviors"]
+    ["students", "students", "students"],
+    ["infractions", "infractions", "infractions"],
+    ["suspensions", "suspensions", "suspensions"],
+    ["referrals", "referrals", "referrals"],
+    ["parent_requests", "parentRequests", "parent_requests"],
+    ["behavior_notes", "notes", "notes"],
+    ["positive_behaviors", "positiveBehaviors", "positive_behaviors"]
   ];
-  for (const [table, key] of tables) {
-    const {data,error} = await sb.from(table).select("*").order("created_at",{ascending:false});
-    if (error) { console.error(error); continue; }
-    state[key] = data || [];
-    const cached = await IDB.all(key);
-    for (const item of cached) if (!state[key].some(x=>x.id===item.id)) await IDB.del(key,item.id);
-    for (const item of state[key]) await IDB.put(key,item);
+  const refreshFailures = [];
+  for (const [table, key, store] of tables) {
+    try {
+      const {data,error} = await sb.from(table).select("*").order("created_at",{ascending:false});
+      if (error) throw error;
+      state[key] = data || [];
+      const cached = await IDB.all(store);
+      for (const item of cached) if (!state[key].some(x=>x.id===item.id)) await IDB.del(store,item.id);
+      for (const item of state[key]) await IDB.put(store,item);
+    } catch (error) {
+      console.error(`Refresh failed for ${table}`, error);
+      refreshFailures.push(table);
+      // Preserve whatever is already in memory/cache if one table fails.
+      try {
+        const cached = await IDB.all(store);
+        if (!state[key].length && cached.length) state[key] = cached;
+      } catch (cacheError) { console.warn(`Local cache unavailable for ${store}`, cacheError); }
+    }
   }
   const {data: notices, error: noticeError} = await sb.from("staff_notifications").select("*").order("created_at", {ascending:false});
   if (!noticeError) state.staffNotifications = notices || []; else console.warn("notifications load", noticeError);
   if (state.role === "dean") await loadAudit();
   await refreshPhotoUrls();
   render();
+  if (refreshFailures.length) {
+    toast(`Some data could not be refreshed: ${refreshFailures.join(", ")}. Other available data has been loaded.`, "error");
+  }
 }
 
 async function refreshPhotoUrls() {

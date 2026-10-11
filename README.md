@@ -39,3 +39,9 @@ Upload the contents of the `phase10` directory to the connected Vercel/Git deplo
 - Refreshes live data when opening Dashboard or Students, and re-renders after the initial data load.
 - Added `positive_behaviors` to the online data-loading list so dashboard/report views can receive those records as well.
 - Bumped the service-worker cache version to `stjames-behavior-v6-student-edit-login-load`; deploy this frontend package and hard-refresh the browser/PWA to use it.
+
+
+## Phase 14 — Data refresh warning fix
+- Fixed the mismatch between camelCase in-memory names and snake_case IndexedDB stores for `parent_requests` and `positive_behaviors`. The previous mismatch could throw `NotFoundError` during refresh and display the red warning.
+- Refresh now reports which Supabase table failed instead of stopping all later refresh work; other available data still renders.
+- Bumped the service-worker cache to `stjames-behavior-v7-indexeddb-refresh-fix`.
