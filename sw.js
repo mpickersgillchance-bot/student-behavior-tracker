@@ -1,4 +1,4 @@
-const CACHE='stjames-behavior-v3';
+const CACHE='stjames-behavior-v4-notifications';
 const ASSETS=['./','./index.html','./styles.css','./app.js','./config.js','./manifest.webmanifest','./assets/school-logo.jpg'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(self.clients.claim()));

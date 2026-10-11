@@ -44,6 +44,7 @@
         <button class="nav-item" data-page="students">◉ <span>Students</span></button>
         <button class="nav-item" data-page="positive">★ <span>Positive Behaviour</span></button>
         <button class="nav-item" data-page="parent_requests">☎ <span>Parent Requests</span></button>
+        <button class="nav-item" data-page="notifications">🔔 <span>Notifications</span></button>
         <button class="nav-item" data-page="reports">▤ <span>Reports</span></button>
         <button class="nav-item dean-only" data-page="staff">⚙ <span>Staff Accounts</span></button>
         <button class="nav-item dean-only" data-page="audit">⌁ <span>Audit Log</span></button>
@@ -116,6 +117,10 @@
           <div class="panel-head"><div><h3>Parent Requests</h3><p>Record parent requests, track follow-up and print completed or draft requests.</p></div><button class="btn primary" data-action="parent_request">＋ Add Parent Request</button></div>
           <div id="parent-request-table" class="table-wrap"></div>
         </section>
+      </div>
+
+      <div id="page-notifications" class="page hidden">
+        <section class="panel"><div class="panel-head"><div><h3>Staff Notifications</h3><p>Announcements and important updates shared across staff profiles.</p></div><button id="add-notification-btn" class="btn primary dean-only">＋ New Notification</button></div><div id="staff-notifications-list" class="staff-notifications-list"></div></section>
       </div>
 
       <div id="page-reports" class="page hidden">

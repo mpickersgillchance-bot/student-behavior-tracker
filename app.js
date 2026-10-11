@@ -3,7 +3,7 @@ const sb = createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_PUBLISHABLE
 
 const state = {
   user: null, role: null, profile: null, online: navigator.onLine,
-  students: [], infractions: [], suspensions: [], referrals: [], parentRequests: [], positiveBehaviors: [], notes: [], staff: [], audit: [], photoUrls: new Map(),
+  students: [], infractions: [], suspensions: [], referrals: [], parentRequests: [], positiveBehaviors: [], notes: [], staff: [], audit: [], staffNotifications: [], photoUrls: new Map(),
   currentPage: "dashboard"
 };
 
@@ -96,6 +96,8 @@ async function loadAll() {
     for (const item of cached) if (!state[key].some(x=>x.id===item.id)) await IDB.del(key,item.id);
     for (const item of state[key]) await IDB.put(key,item);
   }
+  const {data: notices, error: noticeError} = await sb.from("staff_notifications").select("*").order("created_at", {ascending:false});
+  if (!noticeError) state.staffNotifications = notices || []; else console.warn("notifications load", noticeError);
   if (state.role === "dean") await loadAudit();
   await refreshPhotoUrls();
   render();
@@ -224,7 +226,7 @@ function showPage(page) {
   $$(".page").forEach(x=>x.classList.add("hidden"));
   $(`#page-${page}`).classList.remove("hidden");
   $$(".nav-item[data-page]").forEach(x=>x.classList.toggle("active",x.dataset.page===page));
-  const titles={dashboard:"Dashboard",students:"Students",positive:"Positive Behaviour",parent_requests:"Parent Requests",reports:"Reports",staff:"Staff Accounts",audit:"Audit Log"};
+  const titles={dashboard:"Dashboard",students:"Students",positive:"Positive Behaviour",parent_requests:"Parent Requests",notifications:"Notifications",reports:"Reports",staff:"Staff Accounts",audit:"Audit Log"};
   $("#page-title").textContent=titles[page];
   render();
 }
@@ -232,6 +234,7 @@ $("#main-nav").addEventListener("click",e=>{const b=e.target.closest("[data-page
 $$("[data-page-link]").forEach(b=>b.addEventListener("click",()=>showPage(b.dataset.pageLink)));
 $("#quick-add-btn").addEventListener("click",()=>openRecordChooser());
 $$("[data-action]").forEach(b=>b.addEventListener("click",()=>openAction(b.dataset.action)));
+$("#add-notification-btn")?.addEventListener("click", openNotificationForm);
 
 function render() {
   const now = new Date(), todayKey = now.toISOString().slice(0,10);
@@ -267,6 +270,7 @@ function render() {
   renderReports();
   renderAudit();
   renderParentRequests();
+  renderStaffNotifications();
 }
 
 function renderBehaviorChart() {
@@ -440,8 +444,8 @@ function studentForm(existingId="") {
 
 function recordForm(type, presetStudent="") {
   const configs={
-    infraction:{title:"Log Infraction",table:"infractions",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Date & time<input name="occurred_at" type="datetime-local" value="${new Date().toISOString().slice(0,16)}"></label><label>Infraction type<input name="infraction_type" required placeholder="e.g. Truancy"></label><label>Location<input name="location"></label><label class="full">Description<textarea name="description" required></textarea></label><label>Action taken<input name="action_taken"></label><label>Follow-up date<input name="follow_up_date" type="date"></label><label class="full"><input name="parent_contacted" type="checkbox" style="width:auto"> Parent/guardian contacted</label>`},
-    suspension:{title:"Record Suspension",table:"suspensions",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Days<input name="days" type="number" min="0" step="0.5"></label><label>Start<input name="start_at" type="datetime-local"></label><label>End<input name="end_at" type="datetime-local"></label><label class="full">Reason<textarea name="reason" required></textarea></label><label class="full">Return conditions<textarea name="return_conditions"></textarea></label><label class="full"><input name="parent_notified" type="checkbox" style="width:auto"> Parent/guardian notified</label>`},
+    infraction:{title:"Log Infraction",table:"infractions",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Date & time<input name="occurred_at" type="datetime-local" value="${new Date().toISOString().slice(0,16)}"></label><label>Infraction type<input name="infraction_type" required placeholder="e.g. Truancy"></label><label>Location<input name="location"></label><label class="full">Description<textarea name="description" required></textarea></label><label>Action taken<input name="action_taken"></label><label>Follow-up date<input name="follow_up_date" type="date"></label><label class="full"><input name="parent_contacted" type="checkbox" style="width:auto"> Parent/guardian contacted</label><label class="full"><input name="send_urgent_sms" type="checkbox" style="width:auto"> Mark as urgent and send SMS to parent/guardian</label>`},
+    suspension:{title:"Record Suspension",table:"suspensions",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Days<input name="days" type="number" min="0" step="0.5"></label><label>Start<input name="start_at" type="datetime-local"></label><label>End<input name="end_at" type="datetime-local"></label><label class="full">Reason<textarea name="reason" required></textarea></label><label class="full">Return conditions<textarea name="return_conditions"></textarea></label><label class="full"><input name="parent_notified" type="checkbox" style="width:auto"> Parent/guardian notified</label><label class="full"><input name="send_suspension_sms" type="checkbox" style="width:auto" checked> Send suspension SMS to parent/guardian</label>`},
     parent_request:{title:"Parent Request",table:"parent_requests",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Date & time<input name="requested_at" type="datetime-local" value="${new Date().toISOString().slice(0,16)}"></label><label>Parent/Guardian name<input name="parent_name"></label><label>Parent telephone<input name="parent_phone"></label><label>Request type<select name="request_type" required><option value="">Select</option><option>Meeting</option><option>Phone Call</option><option>Early Release</option><option>Behavior Concern</option><option>Academic Concern</option><option>Other</option></select></label><label>Status<select name="status"><option>Open</option><option>In Progress</option><option>Completed</option></select></label><label class="full">Reason / Request<textarea name="reason" required></textarea></label><label>Requested action<input name="requested_action"></label><label>Follow-up date<input name="follow_up_date" type="date"></label><label class="full">Notes<textarea name="notes"></textarea></label>`},
     referral:{title:"Create Referral",table:"referrals",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Date<input name="referred_at" type="datetime-local" value="${new Date().toISOString().slice(0,16)}"></label><label>Referral type<input name="referral_type" required placeholder="e.g. Guidance"></label><label>Destination<input name="destination" placeholder="e.g. Guidance Counsellor"></label><label class="full">Reason<textarea name="reason"></textarea></label><label class="full">Outcome<textarea name="outcome"></textarea></label><label>Follow-up date<input name="follow_up_date" type="date"></label>`},
     positive:{title:"Add Positive Behaviour",table:"positive_behaviors",fields:`<label>Student<select name="student_id" required><option value="">Select student</option>${studentOptions()}</select></label><label>Date & time<input name="recorded_at" type="datetime-local" value="${new Date().toISOString().slice(0,16)}"></label><label>Behaviour type<select name="behavior_type" required><option>Respectful Conduct</option><option>Academic Achievement</option><option>Leadership</option><option>Helping Others</option><option>Attendance / Punctuality</option><option>School Spirit</option><option>Improved Behaviour</option><option>Other</option></select></label><label>Recognition<input name="recognition" placeholder="e.g. Commendation, award, verbal praise"></label><label class="full">Description<textarea name="description" required placeholder="Describe the positive behaviour..."></textarea></label>`},
@@ -468,11 +472,34 @@ function recordForm(type, presetStudent="") {
     if(type==="suspension"){d.start_at=d.start_at?new Date(d.start_at).toISOString():null;d.end_at=d.end_at?new Date(d.end_at).toISOString():null;d.days=d.days?Number(d.days):null}
     if(type==="parent_request") d.requested_at=d.requested_at?new Date(d.requested_at).toISOString():new Date().toISOString()
     try{
+      const sendUrgentSms = type === "infraction" && f.get("send_urgent_sms") === "on";
+      const sendSuspensionSms = type === "suspension" && f.get("send_suspension_sms") === "on";
+      delete d.send_urgent_sms; delete d.send_suspension_sms;
       const saved=await mutate(configs.table,d);
       const key=type==="note"?"notes":(type==="positive"?"positiveBehaviors":type+"s");
       const duplicateInState=state[key].some(x=>saved?.id && x.id===saved.id);
       if(!duplicateInState){state[key].unshift(saved);await IDB.put(type==="positive"?"positive_behaviors":key,saved);}
-      closeModal();render();toast(state.online?"Record saved.":"Record saved offline and queued for sync.","success")
+      closeModal();render();
+      let smsNotice = "";
+      if (sendUrgentSms || sendSuspensionSms) {
+        const student = state.students.find(x => x.id === d.student_id);
+        const rawPhone = String(student?.parent_phone || "").replace(/[\s().-]/g, "");
+        const phone = rawPhone.startsWith("+") ? rawPhone : (rawPhone.length === 10 && /^(876|658)/.test(rawPhone) ? "+1" + rawPhone : rawPhone.length === 11 && rawPhone.startsWith("1") ? "+" + rawPhone : rawPhone.length === 7 ? "+1876" + rawPhone : "");
+        if (!state.online) smsNotice = " SMS was not sent while offline; please send it when connected.";
+        else if (!phone) smsNotice = " SMS was not sent: the parent phone number needs a country code (e.g. +1876...).";
+        else {
+          const eventType = sendSuspensionSms ? "suspension" : "urgent_incident";
+          const message = sendSuspensionSms
+            ? `St. James High School: A suspension has been recorded for ${student?.name || "your child"}. Please contact the school for details and return arrangements.`
+            : `St. James High School: An urgent incident involving ${student?.name || "your child"} has been recorded. Please contact the school as soon as possible.`;
+          try {
+            const { data: smsData, error: smsError } = await sb.functions.invoke("send-textbee-sms", { body: { client_request_id: d.client_request_id || crypto.randomUUID(), student_id: d.student_id, event_type: eventType, recipient_phone: phone, message } });
+            if (smsError || !smsData?.success) throw new Error(smsData?.error || smsError?.message || "SMS failed");
+            smsNotice = smsData.duplicate ? " Duplicate SMS request was safely ignored." : " SMS accepted by TextBee.";
+          } catch (smsErr) { console.error("TextBee SMS", smsErr); smsNotice = " Record saved, but SMS could not be sent. Check TextBee setup and SMS log."; }
+        }
+      }
+      toast((state.online?"Record saved.":"Record saved offline and queued for sync.")+smsNotice, smsNotice && !smsNotice.includes("accepted") ? "info" : "success");
     }catch(err){
       toast(err.message,"error");
       recordSubmitting=false;
@@ -544,6 +571,18 @@ function printHtml(title, body){
 }
 function printParentRequest(id){const r=state.parentRequests.find(x=>x.id===id);if(!r)return;const s=state.students.find(x=>x.id===r.student_id);const body=`<div class="section grid"><div><div class="label">Student</div><div class="value">${escapeHtml(s?.name||"—")}</div></div><div><div class="label">Student ID</div><div class="value">${escapeHtml(s?.student_id||"—")}</div></div><div><div class="label">Grade / Class / Shift</div><div class="value">${escapeHtml([s?.grade,s?.class,s?.shift].filter(Boolean).join(" / ")||"—")}</div></div><div><div class="label">Date & Time</div><div class="value">${fmtDate(r.requested_at)}</div></div><div><div class="label">Parent/Guardian</div><div class="value">${escapeHtml(r.parent_name||s?.parent_name||"—")}</div></div><div><div class="label">Telephone</div><div class="value">${escapeHtml(r.parent_phone||s?.parent_phone||"—")}</div></div><div><div class="label">Request Type</div><div class="value">${escapeHtml(r.request_type)}</div></div><div><div class="label">Status</div><div class="value">${escapeHtml(r.status||"Open")}</div></div><div class="full"><div class="label">Reason / Request</div><div class="value">${escapeHtml(r.reason)}</div></div><div><div class="label">Requested Action</div><div class="value">${escapeHtml(r.requested_action||"—")}</div></div><div><div class="label">Follow-up Date</div><div class="value">${escapeHtml(r.follow_up_date||"—")}</div></div><div class="full"><div class="label">Notes</div><div class="value">${escapeHtml(r.notes||"—")}</div></div></div>`;printHtml("Parent Request",body)}
 function printStudentProfile(id){const s=state.students.find(x=>x.id===id);if(!s)return;const inf=state.infractions.filter(x=>x.student_id===id), susp=state.suspensions.filter(x=>x.student_id===id), ref=state.referrals.filter(x=>x.student_id===id), pr=state.parentRequests.filter(x=>x.student_id===id), pos=state.positiveBehaviors.filter(x=>x.student_id===id);const list=(items,fn)=>items.length?`<table><tbody>${items.map(fn).join("")}</tbody></table>`:`<p>None recorded.</p>`;const body=`<div class="section grid"><div><div class="label">Student ID</div><div class="value">${escapeHtml(s.student_id||"—")}</div></div><div><div class="label">Name</div><div class="value">${escapeHtml(s.name)}</div></div><div><div class="label">Grade / Class / Shift</div><div class="value">${escapeHtml([s.grade,s.class,s.shift].filter(Boolean).join(" / ")||"—")}</div></div><div><div class="label">Parent/Guardian</div><div class="value">${escapeHtml(s.parent_name||"—")} · ${escapeHtml(s.parent_phone||"")}</div></div><div class="full"><div class="label">Address</div><div class="value">${escapeHtml(s.address||"—")}</div></div><div class="full"><div class="label">Additional Information</div><div class="value">${escapeHtml(s.additional_information||"—")}</div></div></div><div class="section"><h3>Infraction History (${inf.length})</h3>${list(inf,x=>`<tr><td>${fmtDate(x.occurred_at)}</td><td><b>${escapeHtml(x.infraction_type)}</b><br>${escapeHtml(x.description||"")}</td><td>${escapeHtml(x.action_taken||"—")}</td></tr>`)}</div><div class="section"><h3>Suspension History (${susp.length})</h3>${list(susp,x=>`<tr><td>${fmtDate(x.start_at)}</td><td>${fmtDate(x.end_at)}</td><td><b>${escapeHtml(x.reason)}</b><br>${escapeHtml(x.days||"—")} day(s)</td></tr>`)}</div><div class="section"><h3>Parent Requests (${pr.length})</h3>${list(pr,x=>`<tr><td>${fmtDate(x.requested_at)}</td><td><b>${escapeHtml(x.request_type)}</b><br>${escapeHtml(x.reason)}</td><td>${escapeHtml(x.status||"Open")}</td></tr>`)}</div><div class="section"><h3>Referrals (${ref.length})</h3>${list(ref,x=>`<tr><td>${fmtDate(x.referred_at)}</td><td><b>${escapeHtml(x.referral_type)}</b><br>${escapeHtml(x.destination||"")}</td><td>${escapeHtml(x.outcome||"—")}</td></tr>`)}</div><div class="section"><h3>Positive Behaviour (${pos.length})</h3>${list(pos,x=>`<tr><td>${fmtDate(x.recorded_at)}</td><td><b>${escapeHtml(x.behavior_type)}</b><br>${escapeHtml(x.description||"")}</td><td>${escapeHtml(x.recognition||"—")}</td></tr>`)}</div>`;printHtml("Student Profile",body)}
+
+function renderStaffNotifications(){
+  const el=$("#staff-notifications-list"); if(!el)return;
+  const rows=state.staffNotifications.filter(n=>!n.archived && (!n.expires_at || new Date(n.expires_at)>new Date()));
+  el.innerHTML=rows.length?rows.map(n=>`<article class="staff-notice priority-${escapeHtml(n.priority||'normal')}"><div class="notice-top"><span class="notice-priority">${escapeHtml((n.priority||'normal').toUpperCase())}</span><small>${fmtDate(n.created_at)}</small></div><h4>${escapeHtml(n.title)}</h4><p>${escapeHtml(n.message).replace(/\n/g,'<br>')}</p><div class="notice-bottom"><span>Audience: ${escapeHtml(n.audience==='all'?'All staff':(ROLE_LABELS[n.audience]||n.audience))}</span>${state.role==='dean'?`<button class="btn secondary" data-archive-notice="${n.id}">${n.archived?'Archived':'Archive'}</button>`:''}</div></article>`).join(''):`<div class="empty">No current notifications.</div>`;
+  $$('[data-archive-notice]').forEach(b=>b.addEventListener('click',async()=>{if(!confirm('Archive this notification for all staff?'))return;const {error}=await sb.from('staff_notifications').update({archived:true}).eq('id',b.dataset.archiveNotice);if(error){toast(error.message,'error');return;}await loadAll();toast('Notification archived.','success')}));
+}
+function openNotificationForm(){
+  if(state.role!=='dean'){toast('Only the Dean of Discipline can publish notifications.','error');return;}
+  modal(`<div class="modal-head"><div><h3>Publish Staff Notification</h3><p>Notifications are shown to every staff profile or the selected role.</p></div><button class="close" data-close>×</button></div><form id="notification-form" class="stack"><label>Title<input name="title" required maxlength="140" placeholder="e.g. Staff meeting update"></label><label>Message<textarea name="message" required maxlength="4000" placeholder="Type the announcement or instruction..."></textarea></label><div class="form-grid"><label>Priority<select name="priority"><option value="normal">Normal</option><option value="low">Low</option><option value="high">High</option><option value="urgent">Urgent</option></select></label><label>Audience<select name="audience"><option value="all">All staff profiles</option><option value="principal">Principal</option><option value="vice_principal">Vice Principal</option><option value="guidance_counsellor">Guidance Counsellor</option><option value="grade_supervisor">Grade Supervisor</option><option value="dean">Dean of Discipline</option></select></label><label class="full">Expiry date (optional)<input type="date" name="expires_at" min="${today()}"></label></div><div class="modal-actions"><button type="button" class="btn secondary" data-close>Cancel</button><button type="submit" class="btn primary">Publish Notification</button></div></form>`);
+  $('#notification-form').addEventListener('submit',async e=>{e.preventDefault();const form=e.currentTarget;const btn=form.querySelector('[type=submit]');if(btn.disabled)return;btn.disabled=true;btn.textContent='Publishing…';const fd=new FormData(form);const payload={title:String(fd.get('title')).trim(),message:String(fd.get('message')).trim(),priority:fd.get('priority'),audience:fd.get('audience'),created_by:state.user.id,expires_at:fd.get('expires_at')?new Date(`${fd.get('expires_at')}T23:59:59`).toISOString():null};try{const {error}=await sb.from('staff_notifications').insert(payload);if(error)throw error;closeModal();await loadAll();showPage('notifications');toast('Notification published for the selected staff audience.','success')}catch(err){btn.disabled=false;btn.textContent='Publish Notification';toast(err.message||'Could not publish notification.','error')}});
+}
 
 function renderAudit() {
   const el=$("#audit-table");
