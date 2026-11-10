@@ -3,7 +3,7 @@ const sb = createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_PUBLISHABLE
 
 const state = {
   user: null, role: null, profile: null, online: navigator.onLine,
-  students: [], infractions: [], suspensions: [], referrals: [], parentRequests: [], positiveBehaviors: [], notes: [], staff: [], audit: [], staffNotifications: [], photoUrls: new Map(),
+  students: [], infractions: [], suspensions: [], referrals: [], parentRequests: [], positiveBehaviors: [], notes: [], staff: [], audit: [], staffNotifications: [], timetables: [], photoUrls: new Map(),
   currentPage: "dashboard", startingUserId: null
 };
 
@@ -23,10 +23,10 @@ const IDB = {
   async open() {
     if (this.db) return this.db;
     this.db = await new Promise((resolve, reject) => {
-      const req = indexedDB.open("stjames_behavior_tracker", 2);
+      const req = indexedDB.open("stjames_behavior_tracker", 3);
       req.onupgradeneeded = () => {
         const db = req.result;
-        ["students","infractions","suspensions","referrals","parent_requests","positive_behaviors","notes","queue"].forEach(s => {
+        ["students","infractions","suspensions","referrals","parent_requests","positive_behaviors","notes","queue","timetables"].forEach(s => {
           if (!db.objectStoreNames.contains(s)) db.createObjectStore(s, { keyPath: "id" });
         });
       };
@@ -81,6 +81,7 @@ async function loadAll() {
     state.parentRequests = await IDB.all("parent_requests");
     state.positiveBehaviors = await IDB.all("positive_behaviors");
     state.notes = await IDB.all("notes");
+    state.timetables = await IDB.all("timetables");
     render();
     return;
   }
@@ -94,7 +95,8 @@ async function loadAll() {
     ["referrals", "referrals", "referrals"],
     ["parent_requests", "parentRequests", "parent_requests"],
     ["behavior_notes", "notes", "notes"],
-    ["positive_behaviors", "positiveBehaviors", "positive_behaviors"]
+    ["positive_behaviors", "positiveBehaviors", "positive_behaviors"],
+    ["class_timetables", "timetables", "timetables"]
   ];
   const refreshFailures = [];
   for (const [table, key, store] of tables) {
@@ -186,7 +188,7 @@ async function mutate(table, data, op="insert") {
     return r?.data;
   }
   const temp = {...data, id: data.id || crypto.randomUUID(), _offline:true};
-  const key = table==="behavior_notes"?"notes":table;
+  const key = table==="behavior_notes"?"notes":table==="class_timetables"?"timetables":table;
   if(op==="insert") { state[key].unshift(temp); await IDB.put(key,temp); }
   if(op==="update") {
     const idx=state[key].findIndex(x=>x.id===temp.id);
@@ -262,7 +264,7 @@ function showPage(page) {
   $$(".page").forEach(x=>x.classList.add("hidden"));
   $(`#page-${page}`).classList.remove("hidden");
   $$(".nav-item[data-page]").forEach(x=>x.classList.toggle("active",x.dataset.page===page));
-  const titles={dashboard:"Dashboard",students:"Students",positive:"Positive Behaviour",parent_requests:"Parent Requests",notifications:"Notifications",reports:"Reports",staff:"Staff Accounts",audit:"Audit Log"};
+  const titles={dashboard:"Dashboard",students:"Students",timetables:"Class Timetables",positive:"Positive Behaviour",parent_requests:"Parent Requests",notifications:"Notifications",reports:"Reports",staff:"Staff Accounts",audit:"Audit Log"};
   $("#page-title").textContent=titles[page];
   render();
 }
@@ -271,6 +273,9 @@ $$("[data-page-link]").forEach(b=>b.addEventListener("click",()=>showPage(b.data
 $("#quick-add-btn").addEventListener("click",()=>openRecordChooser());
 $$("[data-action]").forEach(b=>b.addEventListener("click",()=>openAction(b.dataset.action)));
 $("#add-notification-btn")?.addEventListener("click", openNotificationForm);
+$("#add-timetable-btn")?.addEventListener("click",()=>timetableForm());
+$("#timetable-filter")?.addEventListener("input",renderTimetables);
+$("#timetable-shift-filter")?.addEventListener("change",renderTimetables);
 
 function render() {
   const now = new Date(), todayKey = now.toISOString().slice(0,10);
@@ -303,6 +308,7 @@ function render() {
   renderNotifications();
   renderPositive();
   renderStudents();
+  renderTimetables();
   renderReports();
   renderAudit();
   renderParentRequests();
@@ -381,6 +387,34 @@ function renderRoleWorkspace(){
   const items=sets[state.role]||[]; if(!items.length){el.innerHTML="";return;}
   el.innerHTML=`<section class="panel role-workspace"><div class="panel-head"><div><h3>My Role Sections</h3><p>${escapeHtml(ROLE_LABELS[state.role]||"Staff")} workspace</p></div></div><div class="role-section-grid">${items.map(([title,desc,page])=>`<button class="role-section-card" data-role-page="${page}"><strong>${escapeHtml(title)}</strong><span>${escapeHtml(desc)}</span><b>Open →</b></button>`).join("")}</div></section>`;
   $$('[data-role-page]').forEach(b=>b.addEventListener('click',()=>showPage(b.dataset.rolePage)));
+}
+
+const DAY_NAMES = ["","Monday","Tuesday","Wednesday","Thursday","Friday"];
+function localDayNumber(date=new Date()) { const d=date.getDay(); return d===0?7:d; }
+function minutesOfTime(t) { if(!t) return -1; const [h,m]=String(t).slice(0,5).split(":").map(Number); return h*60+m; }
+function formatTime(t) { if(!t)return "—"; const [h,m]=String(t).slice(0,5).split(":").map(Number); return new Date(2000,0,1,h,m).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}); }
+function studentTimetableHtml(student) {
+  const day=localDayNumber(), now=new Date(), mins=now.getHours()*60+now.getMinutes();
+  const entries=state.timetables.filter(t=>t.is_active!==false && String(t.shift)===String(student.shift) && String(t.grade)===String(student.grade) && String(t.class).toLowerCase()===String(student.class||"").toLowerCase() && Number(t.day_of_week)===day).sort((a,b)=>minutesOfTime(a.start_time)-minutesOfTime(b.start_time));
+  const current=entries.find(t=>minutesOfTime(t.start_time)<=mins && minutesOfTime(t.end_time)>mins);
+  const next=entries.find(t=>minutesOfTime(t.start_time)>mins);
+  const status=current?`<div class="timetable-current"><span class="tag success">IN SESSION</span><strong>${escapeHtml(current.subject)}</strong><span>${formatTime(current.start_time)}–${formatTime(current.end_time)}${current.teacher?` · ${escapeHtml(current.teacher)}`:""}${current.room?` · Room ${escapeHtml(current.room)}`:""}</span></div>`:next?`<div class="timetable-current"><span class="tag">NEXT CLASS</span><strong>${escapeHtml(next.subject)}</strong><span>Begins ${formatTime(next.start_time)}${next.teacher?` · ${escapeHtml(next.teacher)}`:""}</span></div>`:`<div class="empty">No class is scheduled for this student at this moment${day>5?" (weekend)":""}.</div>`;
+  return `<section class="record-section timetable-profile"><div class="panel-head"><div><h4>Today's Timetable · ${DAY_NAMES[day]||"Weekend"}</h4><p>Shift ${escapeHtml(student.shift||"—")} · Grade ${escapeHtml(student.grade||"—")} · Class ${escapeHtml(student.class||"—")}</p></div></div>${status}${entries.length?`<div class="table-wrap"><table class="data-table"><thead><tr><th>Time</th><th>Subject</th><th>Teacher</th><th>Room</th></tr></thead><tbody>${entries.map(t=>`<tr class="${t.id===current?.id?"current-period":""}"><td>${formatTime(t.start_time)}–${formatTime(t.end_time)}</td><td><b>${escapeHtml(t.subject)}</b></td><td>${escapeHtml(t.teacher||"—")}</td><td>${escapeHtml(t.room||"—")}</td></tr>`).join("")}</tbody></table></div>`:`<p class="muted">No timetable entries have been added for this class and shift.</p>`}</section>`;
+}
+function renderTimetables() {
+  const host=$("#timetable-table"); if(!host)return;
+  const q=($("#timetable-filter")?.value||"").toLowerCase(), shift=$("#timetable-shift-filter")?.value||"";
+  const rows=state.timetables.filter(t=>(!shift||String(t.shift)===shift)&&(!q||[t.grade,t.class,t.subject,t.teacher,t.room,DAY_NAMES[t.day_of_week]].join(" ").toLowerCase().includes(q))).sort((a,b)=>String(a.shift).localeCompare(String(b.shift))||String(a.grade).localeCompare(String(b.grade),undefined,{numeric:true})||String(a.class).localeCompare(String(b.class))||Number(a.day_of_week)-Number(b.day_of_week)||minutesOfTime(a.start_time)-minutesOfTime(b.start_time));
+  host.innerHTML=rows.length?`<table class="data-table"><thead><tr><th>Shift</th><th>Grade / Class</th><th>Day</th><th>Time</th><th>Subject</th><th>Teacher</th><th>Room</th><th></th></tr></thead><tbody>${rows.map(t=>`<tr><td>${escapeHtml(t.shift)}</td><td>${escapeHtml(t.grade)} / ${escapeHtml(t.class)}</td><td>${DAY_NAMES[t.day_of_week]||"—"}</td><td>${formatTime(t.start_time)}–${formatTime(t.end_time)}</td><td><b>${escapeHtml(t.subject)}</b></td><td>${escapeHtml(t.teacher||"—")}</td><td>${escapeHtml(t.room||"—")}</td><td><button class="btn secondary btn-small" data-edit-timetable="${t.id}">Edit</button> <button class="btn danger btn-small" data-delete-timetable="${t.id}">Delete</button></td></tr>`).join("")}</tbody></table>`:`<div class="empty">No timetable entries yet. Add the first class timetable using the button above.</div>`;
+  host.querySelectorAll("[data-edit-timetable]").forEach(b=>b.addEventListener("click",()=>timetableForm(b.dataset.editTimetable)));
+  host.querySelectorAll("[data-delete-timetable]").forEach(b=>b.addEventListener("click",async()=>{if(!confirm("Delete this timetable period?"))return;try{await mutate("class_timetables",{id:b.dataset.deleteTimetable},"delete");state.timetables=state.timetables.filter(x=>x.id!==b.dataset.deleteTimetable);await IDB.del("timetables",b.dataset.deleteTimetable);renderTimetables();toast("Timetable period deleted.","success")}catch(e){toast(e.message||"Could not delete timetable period.","error")}}));
+}
+function timetableForm(id=null) {
+  const existing=state.timetables.find(x=>x.id===id);
+  const canEdit=["dean","principal","vice_principal","grade_supervisor"].includes(state.role);
+  if(!canEdit){toast("You can view timetables but do not have permission to edit them.","error");return;}
+  modal(`<div class="modal-head"><div><h3>${existing?"Edit":"Add"} Class Timetable Period</h3><p>Timetable entries are specific to a grade, class and shift.</p></div><button class="close" data-close>×</button></div><form id="timetable-form" class="form-grid"><label>Grade<input name="grade" required value="${escapeHtml(existing?.grade||"")}" placeholder="e.g. 7"></label><label>Class<input name="class" required value="${escapeHtml(existing?.class||"")}" placeholder="e.g. 7A"></label><label>Shift<select name="shift" required><option value="1" ${String(existing?.shift||"1")==="1"?"selected":""}>Shift 1</option><option value="2" ${String(existing?.shift||"")==="2"?"selected":""}>Shift 2</option></select></label><label>Day<select name="day_of_week" required>${DAY_NAMES.slice(1).map((d,i)=>`<option value="${i+1}" ${Number(existing?.day_of_week||1)===i+1?"selected":""}>${d}</option>`).join("")}</select></label><label>Subject<input name="subject" required value="${escapeHtml(existing?.subject||"")}" placeholder="e.g. Mathematics"></label><label>Teacher<input name="teacher" value="${escapeHtml(existing?.teacher||"")}"></label><label>Room / Location<input name="room" value="${escapeHtml(existing?.room||"")}"></label><label>Start time<input type="time" name="start_time" required value="${escapeHtml(String(existing?.start_time||"08:00").slice(0,5))}"></label><label>End time<input type="time" name="end_time" required value="${escapeHtml(String(existing?.end_time||"08:40").slice(0,5))}"></label><div class="modal-actions full"><button type="button" class="btn secondary" data-close>Cancel</button><button class="btn primary" type="submit">Save Timetable Period</button></div></form>`);
+  $("#timetable-form").addEventListener("submit",async e=>{e.preventDefault();const fd=new FormData(e.currentTarget),data=Object.fromEntries(fd.entries());data.day_of_week=Number(data.day_of_week);data.is_active=true;if(data.end_time<=data.start_time){toast("End time must be later than start time.","error");return;}try{let saved;if(existing){data.id=existing.id;saved=await mutate("class_timetables",data,"update");state.timetables=state.timetables.map(x=>x.id===existing.id?(saved||{...existing,...data}):x)}else{saved=await mutate("class_timetables",data);if(saved)state.timetables.unshift(saved)}if(saved)await IDB.put("timetables",saved);closeModal();renderTimetables();toast("Timetable period saved.","success")}catch(err){toast(err.message||"Could not save timetable period.","error")}});
 }
 
 function renderStudents() {
@@ -577,6 +611,7 @@ function openStudent(id) {
   modal(`<div class="modal-head"><div><h3>Student Profile</h3><p>Behavior and support history</p></div><button class="close" data-close>×</button></div>
     <div class="profile-head"><div class="avatar-large">${state.photoUrls.get(s.id)?`<img src="${escapeHtml(state.photoUrls.get(s.id))}" alt="">`:escapeHtml((s.name||"S").charAt(0))}</div><div><h3 style="margin:0">${escapeHtml(s.name)}</h3><p class="muted">${escapeHtml(s.student_id||"No student ID")} · Grade ${escapeHtml(s.grade||"—")} · ${escapeHtml(s.class||"—")} · ${escapeHtml(s.shift||"—")}</p></div></div>
     <div class="form-grid" style="margin-top:15px"><div><b>Address</b><div class="muted">${escapeHtml(s.address||"—")}</div></div><div><b>Parent/Guardian</b><div class="muted">${escapeHtml(s.parent_name||"—")} · ${escapeHtml(s.parent_phone||"—")}</div></div><div class="full"><b>Additional information</b><div class="muted">${escapeHtml(s.additional_information||"—")}</div></div></div>
+    ${studentTimetableHtml(s)}
     <div class="modal-actions"><button class="btn primary" id="edit-student-btn" type="button">✎ Edit Student</button><button class="btn secondary" id="print-student-btn" type="button">🖨 Print Profile</button><button class="btn secondary" data-add-record="note">＋ Note</button><button class="btn secondary" data-add-record="infraction">＋ Infraction</button><button class="btn secondary" data-add-record="suspension">＋ Suspension</button><button class="btn secondary" data-add-record="positive">＋ Positive</button><button class="btn primary" data-add-record="referral">＋ Referral</button>${state.role==="dean"?`<button class="btn danger" id="delete-student-btn" type="button">Delete Student Profile</button>`:""}</div>
     <div class="record-grid">
       <div class="record-section"><h4>Infractions (${inf.length})</h4>${inf.length?inf.map(x=>`<div class="record-item"><b>${escapeHtml(x.infraction_type)}</b><br>${escapeHtml(x.description||"")}<br><span class="muted">${fmtDate(x.occurred_at)}</span></div>`).join(""):`<div class="empty">None recorded.</div>`}</div>

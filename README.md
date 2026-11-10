@@ -45,3 +45,10 @@ Upload the contents of the `phase10` directory to the connected Vercel/Git deplo
 - Fixed the mismatch between camelCase in-memory names and snake_case IndexedDB stores for `parent_requests` and `positive_behaviors`. The previous mismatch could throw `NotFoundError` during refresh and display the red warning.
 - Refresh now reports which Supabase table failed instead of stopping all later refresh work; other available data still renders.
 - Bumped the service-worker cache to `stjames-behavior-v7-indexeddb-refresh-fix`.
+
+## Phase 16 — Class Timetables (two shifts)
+- Added the `class_timetables` Supabase table with Row Level Security. Active staff can read timetable entries; Dean, Principal, Vice Principal and Grade Supervisor roles can add, edit and delete entries.
+- Added a Class Timetables workspace for entering each lesson by grade, class, shift (1 or 2), weekday, subject, teacher, room, start time and end time.
+- Student profiles now show the timetable for the student's exact grade/class/shift and local weekday, highlight the lesson currently in progress, and show the next lesson when between periods.
+- Added local IndexedDB caching and offline queue support for timetable changes; the service worker cache was bumped.
+- Times are evaluated using the device's local time. Enter timetable times in the school's local time (Jamaica).

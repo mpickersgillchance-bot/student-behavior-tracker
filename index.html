@@ -42,6 +42,7 @@
       <nav id="main-nav">
         <button class="nav-item active" data-page="dashboard">▦ <span>Dashboard</span></button>
         <button class="nav-item" data-page="students">◉ <span>Students</span></button>
+        <button class="nav-item" data-page="timetables">▦ <span>Class Timetables</span></button>
         <button class="nav-item" data-page="positive">★ <span>Positive Behaviour</span></button>
         <button class="nav-item" data-page="parent_requests">☎ <span>Parent Requests</span></button>
         <button class="nav-item" data-page="notifications">🔔 <span>Notifications</span></button>
@@ -109,6 +110,14 @@
           </div>
           <div class="filters"><input id="student-search" placeholder="Search name, ID, parent or class…"><select id="grade-filter"><option value="">All grades</option></select><select id="shift-filter"><option value="">All shifts</option></select></div>
           <div id="student-table" class="table-wrap"></div>
+        </section>
+      </div>
+
+      <div id="page-timetables" class="page hidden">
+        <section class="panel">
+          <div class="panel-head"><div><h3>Class Timetables</h3><p>Enter each class timetable separately for Shift 1 and Shift 2. Student profiles will display the subject scheduled at the current local time.</p></div><button id="add-timetable-btn" class="btn primary">＋ Add Timetable Period</button></div>
+          <div class="filters"><input id="timetable-filter" placeholder="Search grade, class, subject or teacher…"><select id="timetable-shift-filter"><option value="">All shifts</option><option value="1">Shift 1</option><option value="2">Shift 2</option></select></div>
+          <div id="timetable-table" class="table-wrap"></div>
         </section>
       </div>
 
